@@ -1,0 +1,32 @@
+# Cloud-built Kototoro Linux/Compose application, repackaged for Arch.
+pkgname=kototoro-compose-hidpi
+pkgver=2.4.9
+pkgrel=2
+pkgdesc='Kototoro native Linux manga reader with adjustable Compose HiDPI interface'
+arch=('x86_64')
+url='https://github.com/Kototoro-app/Kototoro'
+license=('Apache-2.0')
+depends=('glibc' 'fontconfig' 'freetype2' 'libx11' 'libxext' 'libxi' 'libxrender' 'libxtst' 'libxrandr' 'libxinerama' 'libxcursor' 'alsa-lib' 'mpv')
+optdepends=(
+  'xorg-xwayland: use Compose X11 on Wayland'
+  'vulkan-icd-loader: GPU runtime for ncnn-vulkan image upscaling'
+)
+provides=('kototoro')
+conflicts=('kototoro' 'kototoro-bin')
+options=('!strip' '!debug')
+source=('Kototoro-app.tar.gz')
+sha256sums=('@ARCHIVE_SHA256@')
+
+package() {
+  local image="$srcdir/Kototoro"
+  if [[ ! -x "$image/bin/Kototoro" || ! -f "$image/lib/Kototoro.png" ]]; then
+    printf 'Missing or incomplete Kototoro Linux application image\n' >&2
+    return 1
+  fi
+  install -d "$pkgdir/opt/kototoro"
+  cp -a "$image/." "$pkgdir/opt/kototoro/"
+  install -Dm755 "$startdir/kototoro-launcher" "$pkgdir/usr/bin/kototoro"
+  install -Dm644 "$startdir/kototoro.desktop" "$pkgdir/usr/share/applications/kototoro.desktop"
+  install -Dm644 "$image/lib/Kototoro.png" "$pkgdir/usr/share/pixmaps/kototoro.png"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
