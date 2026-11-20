@@ -1,0 +1,41 @@
+name: Check Kototoro upstream releases
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: kototoro-upstream-update
+  cancel-in-progress: false
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check latest official release and update pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/update-upstream.py
+      - name: Create update pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ github.token }}
+          branch: automation/update-kototoro-release
+          delete-branch: true
+          commit-message: "chore: update Kototoro upstream release"
+          title: "chore: update Kototoro to latest upstream release"
+          body: |
+            Automated update from the official Kototoro GitHub Releases API.
+
+            This PR updates the pinned release tag, source commit, Mihon compatibility ZIP and verified SHA-256, plus the Arch package version.
+
+            The PR build workflow checks whether the Compose density patch still applies and whether the Linux application and Arch package build successfully. Merge only after that check passes.
+          labels: |
+            automated
+            upstream-update
