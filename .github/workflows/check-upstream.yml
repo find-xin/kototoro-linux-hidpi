@@ -36,6 +36,3 @@ jobs:
             This PR updates the pinned release tag, source commit, Mihon compatibility ZIP and verified SHA-256, plus the Arch package version.
 
             The PR build workflow checks whether the Compose density patch still applies and whether the Linux application and Arch package build successfully. Merge only after that check passes.
-          labels: |
-            automated
-            upstream-update
