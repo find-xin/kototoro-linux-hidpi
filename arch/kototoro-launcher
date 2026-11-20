@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Compose text/layout scaling (not KDE bitmap magnification).
+export KOTOTORO_UI_SCALE="${KOTOTORO_UI_SCALE:-1.5}"
+exec /opt/kototoro/bin/Kototoro "$@"
