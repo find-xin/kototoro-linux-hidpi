@@ -1,0 +1,41 @@
+--- a/desktop-app/src/main/kotlin/org/skepsun/kototoro/desktop/app/DesktopMain.kt
++++ b/desktop-app/src/main/kotlin/org/skepsun/kototoro/desktop/app/DesktopMain.kt
+@@ -1,7 +1,9 @@
+ package org.skepsun.kototoro.desktop.app
+ 
+ import androidx.compose.runtime.*
++import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.res.painterResource
++import androidx.compose.ui.unit.Density
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.window.Window
+ import androidx.compose.ui.window.application
+@@ -105,8 +107,26 @@
+             window.minimumSize = Dimension(920, 620)
+             val owner = controller
+             val fullscreen = rememberDesktopFullscreen(window, windowState)
+-            if (owner == null) DesktopStartup(startupError) else DesktopApp(owner, closing,
+-                fullscreen = fullscreen.active, onToggleFullscreen = fullscreen::toggle, onExitRequest = requestExit)
++            // Compose uses its own logical density. AWT's sun.java2d.uiScale is not
++            // reliable for this application under Linux/XWayland.
++            // Set KOTOTORO_UI_SCALE=1.0 to opt out; the default is 1.5 (150%).
++            val requestedUiScale = remember {
++                System.getenv("KOTOTORO_UI_SCALE")
++                    ?.toFloatOrNull()
++                    ?.takeIf { it.isFinite() && it in 0.75f..3.0f }
++                    ?: 1.5f
++            }
++            val nativeDensity = LocalDensity.current
++            val uiDensity = remember(nativeDensity, requestedUiScale) {
++                Density(
++                    density = nativeDensity.density * requestedUiScale,
++                    fontScale = nativeDensity.fontScale,
++                )
++            }
++            CompositionLocalProvider(LocalDensity provides uiDensity) {
++                if (owner == null) DesktopStartup(startupError) else DesktopApp(owner, closing,
++                    fullscreen = fullscreen.active, onToggleFullscreen = fullscreen::toggle, onExitRequest = requestExit)
++            }
+         }
+     }
+ }
