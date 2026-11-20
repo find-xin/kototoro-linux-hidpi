@@ -76,7 +76,11 @@ jobs:
           set -euo pipefail
           : "${ANDROID_HOME:?GitHub Ubuntu runner must have Android SDK}"
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0'
-          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
+          # API 37.0 is installed under platforms/android-37.0, not android-37.
+          # Check the actual SDK platform installed by sdkmanager, not a hard-coded major-only directory.
+          ls -al "$ANDROID_HOME/platforms"
+          test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          echo "Android SDK platform 37.0 verified"
 
       - name: Download and verify Mihon JVM runtime inputs
         shell: bash
