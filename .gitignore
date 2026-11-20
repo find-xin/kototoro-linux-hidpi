@@ -1,0 +1,9 @@
+# Generated artifacts
+upstream/
+compatibility/
+release-staging/
+*.pkg.tar.zst
+*.tar.gz
+*.zip
+.gradle/
+build/
