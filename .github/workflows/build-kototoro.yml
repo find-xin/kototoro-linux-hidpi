@@ -2,13 +2,6 @@ name: Build Kototoro Linux HiDPI for Arch
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/build-kototoro.yml'
-      - 'patches/**'
-      - 'arch/**'
 
 permissions:
   contents: read
@@ -26,20 +19,32 @@ jobs:
       - name: Checkout the packaging project
         uses: actions/checkout@v4
 
-      - name: Get pinned Kototoro 2.4.9 source
+      - name: Load pinned upstream release metadata
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch v2.4.9 --recurse-submodules \
+          source "$GITHUB_WORKSPACE/.github/upstream.env"
+          {
+            echo "KOTOTORO_VERSION=$KOTOTORO_VERSION"
+            echo "KOTOTORO_TAG=$KOTOTORO_TAG"
+            echo "KOTOTORO_COMMIT=$KOTOTORO_COMMIT"
+            echo "KOTOTORO_WINDOWS_ASSET=$KOTOTORO_WINDOWS_ASSET"
+            echo "KOTOTORO_WINDOWS_SHA256=$KOTOTORO_WINDOWS_SHA256"
+          } >> "$GITHUB_ENV"
+
+      - name: Get pinned Kototoro source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$KOTOTORO_TAG" --recurse-submodules \
             https://github.com/Kototoro-app/Kototoro.git upstream
           actual="$(git -C upstream rev-parse HEAD)"
-          expected='d9f1cdd826e3b5075885a216357b574f2f5e2484'
-          if [[ "$actual" != "$expected" ]]; then
-            echo "::error::Upstream v2.4.9 changed ($actual). Refusing to patch unverified source."
+          if [[ "$actual" != "$KOTOTORO_COMMIT" ]]; then
+            echo "::error::Upstream $KOTOTORO_TAG resolved to $actual, expected $KOTOTORO_COMMIT."
             exit 1
           fi
 
-      - name: Apply Compose density patch (no Android UI changes)
+      - name: Apply Compose density patch
         shell: bash
         run: |
           set -euo pipefail
@@ -76,20 +81,16 @@ jobs:
           set -euo pipefail
           : "${ANDROID_HOME:?GitHub Ubuntu runner must have Android SDK}"
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0'
-          # API 37.0 is installed under platforms/android-37.0, not android-37.
-          # Check the actual SDK platform installed by sdkmanager, not a hard-coded major-only directory.
-          ls -al "$ANDROID_HOME/platforms"
           test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
-          echo "Android SDK platform 37.0 verified"
 
       - name: Download and verify Mihon JVM runtime inputs
         shell: bash
         run: |
           set -euo pipefail
-          file='Kototoro-2.4.9-windows-x64-release.zip'
-          url="https://github.com/Kototoro-app/Kototoro/releases/download/v2.4.9/$file"
+          file="$KOTOTORO_WINDOWS_ASSET"
+          url="https://github.com/Kototoro-app/Kototoro/releases/download/$KOTOTORO_TAG/$file"
           curl --fail --location --retry 4 --retry-delay 5 --output "$file" "$url"
-          echo '5ace91a9933206246ccf970ee19c308cea8758b47c0a400406928312d9ff4081  Kototoro-2.4.9-windows-x64-release.zip' | sha256sum -c -
+          echo "$KOTOTORO_WINDOWS_SHA256  $file" | sha256sum -c -
           python3 upstream/desktop-app/prepare-compatibility.py \
             "$GITHUB_WORKSPACE/$file" \
             --output "$GITHUB_WORKSPACE/compatibility"
@@ -104,13 +105,13 @@ jobs:
             -PwithDesktopApp -PwithLinuxDistribution \
             "-PmihonCompatibilityDirectory=$GITHUB_WORKSPACE/compatibility" \
             -PmihonCompatibilityJavaVersion=21 \
-            -PdesktopPackageVersion=2.4.9 \
+            "-PdesktopPackageVersion=$KOTOTORO_VERSION" \
             "-Dorg.gradle.java.installations.paths=$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" \
             :desktop-app:createDistributable \
             --no-configuration-cache --no-daemon --console=plain --stacktrace
           test -x desktop-app/build/compose/binaries/main/app/Kototoro/bin/Kototoro
 
-      - name: Test the upstream Linux distributable
+      - name: Test the Linux distributable
         working-directory: upstream
         shell: bash
         run: |
@@ -119,12 +120,12 @@ jobs:
             -PwithDesktopApp -PwithLinuxDistribution \
             "-PmihonCompatibilityDirectory=$GITHUB_WORKSPACE/compatibility" \
             -PmihonCompatibilityJavaVersion=21 \
-            -PdesktopPackageVersion=2.4.9 \
+            "-PdesktopPackageVersion=$KOTOTORO_VERSION" \
             "-Dorg.gradle.java.installations.paths=$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" \
             :desktop-app:linuxDistributionTest \
             --no-configuration-cache --no-daemon --console=plain --stacktrace
 
-      - name: Archive tested Linux application and upstream license
+      - name: Archive the Linux application and license
         shell: bash
         run: |
           set -euo pipefail
@@ -133,12 +134,11 @@ jobs:
           cp upstream/LICENSE release-staging/LICENSE
           tar -C release-staging -czf Kototoro-app.tar.gz Kototoro LICENSE
           sha256sum Kototoro-app.tar.gz
-          tar -tzf Kototoro-app.tar.gz | head -15 || true
 
-      - name: Upload app image for Arch packaging
+      - name: Upload Linux app image
         uses: actions/upload-artifact@v4
         with:
-          name: kototoro-linux-app-2.4.9
+          name: kototoro-linux-app
           path: Kototoro-app.tar.gz
           if-no-files-found: error
           retention-days: 7
@@ -173,10 +173,10 @@ jobs:
       - name: Fetch the cloud-built Linux application
         uses: actions/download-artifact@v4
         with:
-          name: kototoro-linux-app-2.4.9
+          name: kototoro-linux-app
           path: arch
 
-      - name: Verify artifact, prepare checksum, and run makepkg
+      - name: Verify artifact and run makepkg
         shell: bash
         working-directory: arch
         run: |
@@ -184,7 +184,6 @@ jobs:
           tar -tzf Kototoro-app.tar.gz | grep -Fx 'Kototoro/bin/Kototoro'
           sha="$(sha256sum Kototoro-app.tar.gz | cut -d ' ' -f1)"
           sed -i "s/@ARCHIVE_SHA256@/$sha/" PKGBUILD
-          grep -q "$sha" PKGBUILD
           useradd --create-home --shell /bin/bash pkgbuild
           chown -R pkgbuild:pkgbuild "$GITHUB_WORKSPACE/arch"
           runuser -u pkgbuild -- makepkg --noconfirm --clean --nodeps
@@ -193,7 +192,7 @@ jobs:
       - name: Deliver native Arch package
         uses: actions/upload-artifact@v4
         with:
-          name: Kototoro-Arch-HiDPI-v2.4.9
+          name: Kototoro-Arch-HiDPI
           path: arch/*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 30
