@@ -1,0 +1,195 @@
+name: Build Kototoro Linux HiDPI for Arch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-kototoro.yml'
+      - 'patches/**'
+      - 'arch/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kototoro-hidpi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compile-linux:
+    name: Compile upstream Linux desktop app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Checkout the packaging project
+        uses: actions/checkout@v4
+
+      - name: Get pinned Kototoro 2.4.9 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v2.4.9 --recurse-submodules \
+            https://github.com/Kototoro-app/Kototoro.git upstream
+          actual="$(git -C upstream rev-parse HEAD)"
+          expected='d9f1cdd826e3b5075885a216357b574f2f5e2484'
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Upstream v2.4.9 changed ($actual). Refusing to patch unverified source."
+            exit 1
+          fi
+
+      - name: Apply Compose density patch (no Android UI changes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C upstream apply --check "$GITHUB_WORKSPACE/patches/compose-density.patch"
+          git -C upstream apply "$GITHUB_WORKSPACE/patches/compose-density.patch"
+          git -C upstream diff --check
+          git -C upstream diff -- desktop-app/src/main/kotlin/org/skepsun/kototoro/desktop/app/DesktopMain.kt
+
+      - name: Prepare Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libmpv2 xvfb mesa-vulkan-drivers vulkan-tools libgl1-mesa-dri \
+            fontconfig libxrender1 libxtst6 libxi6 libxrandr2 \
+            libxinerama1 libxcursor1 unzip curl
+
+      - name: Install JDK 21 for Mihon compatibility layer
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install JDK 17 for upstream Gradle build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK platform (cloud runner only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?GitHub Ubuntu runner must have Android SDK}"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0'
+          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
+
+      - name: Download and verify Mihon JVM runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          file='Kototoro-2.4.9-windows-x64-release.zip'
+          url="https://github.com/Kototoro-app/Kototoro/releases/download/v2.4.9/$file"
+          curl --fail --location --retry 4 --retry-delay 5 --output "$file" "$url"
+          echo '5ace91a9933206246ccf970ee19c308cea8758b47c0a400406928312d9ff4081  Kototoro-2.4.9-windows-x64-release.zip' | sha256sum -c -
+          python3 upstream/desktop-app/prepare-compatibility.py \
+            "$GITHUB_WORKSPACE/$file" \
+            --output "$GITHUB_WORKSPACE/compatibility"
+          rm -f "$file"
+
+      - name: Build the self-contained Linux application
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            -PwithDesktopApp -PwithLinuxDistribution \
+            "-PmihonCompatibilityDirectory=$GITHUB_WORKSPACE/compatibility" \
+            -PmihonCompatibilityJavaVersion=21 \
+            -PdesktopPackageVersion=2.4.9 \
+            "-Dorg.gradle.java.installations.paths=$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" \
+            :desktop-app:createDistributable \
+            --no-configuration-cache --no-daemon --console=plain --stacktrace
+          test -x desktop-app/build/compose/binaries/main/app/Kototoro/bin/Kototoro
+
+      - name: Test the upstream Linux distributable
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a -s '-screen 0 1600x1200x24 -nolisten tcp' ./gradlew \
+            -PwithDesktopApp -PwithLinuxDistribution \
+            "-PmihonCompatibilityDirectory=$GITHUB_WORKSPACE/compatibility" \
+            -PmihonCompatibilityJavaVersion=21 \
+            -PdesktopPackageVersion=2.4.9 \
+            "-Dorg.gradle.java.installations.paths=$JAVA_HOME_17_X64,$JAVA_HOME_21_X64" \
+            :desktop-app:linuxDistributionTest \
+            --no-configuration-cache --no-daemon --console=plain --stacktrace
+
+      - name: Archive tested Linux application and upstream license
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-staging
+          cp -a upstream/desktop-app/build/compose/binaries/main/app/Kototoro release-staging/
+          cp upstream/LICENSE release-staging/LICENSE
+          tar -C release-staging -czf Kototoro-app.tar.gz Kototoro LICENSE
+          sha256sum Kototoro-app.tar.gz
+          tar -tzf Kototoro-app.tar.gz | head -15 || true
+
+      - name: Upload app image for Arch packaging
+        uses: actions/upload-artifact@v4
+        with:
+          name: kototoro-linux-app-2.4.9
+          path: Kototoro-app.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build-logs
+          path: |
+            upstream/desktop-app/build/reports/
+            upstream/desktop-app/build/test-results/
+          if-no-files-found: ignore
+
+  package-arch:
+    name: Package with makepkg on Arch Linux
+    needs: compile-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Prepare container tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Sy --noconfirm --needed git unzip
+
+      - name: Checkout Arch package definition
+        uses: actions/checkout@v4
+
+      - name: Fetch the cloud-built Linux application
+        uses: actions/download-artifact@v4
+        with:
+          name: kototoro-linux-app-2.4.9
+          path: arch
+
+      - name: Verify artifact, prepare checksum, and run makepkg
+        shell: bash
+        working-directory: arch
+        run: |
+          set -euo pipefail
+          tar -tzf Kototoro-app.tar.gz | grep -Fx 'Kototoro/bin/Kototoro'
+          sha="$(sha256sum Kototoro-app.tar.gz | cut -d ' ' -f1)"
+          sed -i "s/@ARCHIVE_SHA256@/$sha/" PKGBUILD
+          grep -q "$sha" PKGBUILD
+          useradd --create-home --shell /bin/bash pkgbuild
+          chown -R pkgbuild:pkgbuild "$GITHUB_WORKSPACE/arch"
+          runuser -u pkgbuild -- makepkg --noconfirm --clean --nodeps
+          ls -lh ./*.pkg.tar.zst
+
+      - name: Deliver native Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kototoro-Arch-HiDPI-v2.4.9
+          path: arch/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 30
