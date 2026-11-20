@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Kototoro
+Comment=Comics, novels and anime reader
+Exec=/usr/bin/kototoro
+Icon=kototoro
+Type=Application
+Terminal=false
+Categories=Graphics;Viewer;
+StartupNotify=true
