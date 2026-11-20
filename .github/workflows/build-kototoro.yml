@@ -2,6 +2,14 @@ name: Build Kototoro Linux HiDPI for Arch
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/upstream.env'
+      - '.github/workflows/build-kototoro.yml'
+      - 'patches/**'
+      - 'arch/**'
 
 permissions:
   contents: read
