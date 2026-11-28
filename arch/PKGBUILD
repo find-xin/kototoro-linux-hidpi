@@ -1,7 +1,7 @@
 # Cloud-built Kototoro Linux/Compose application, repackaged for Arch.
 pkgname=kototoro-compose-hidpi
-pkgver=2.4.9
-pkgrel=2
+pkgver=2.5.5
+pkgrel=1
 pkgdesc='Kototoro native Linux manga reader with adjustable Compose HiDPI interface'
 arch=('x86_64')
 url='https://github.com/Kototoro-app/Kototoro'
